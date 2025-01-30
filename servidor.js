@@ -1,186 +1,163 @@
-const http = require('http');
-const fs = require('fs');
-const path = require('path');
+/**
+ * server.js
+ *
+ * Plain Node.js HTTP server (no Express) that manages:
+ *   - Painted cells (non-white)
+ *   - NPCs that spawn on random painted cells every 10s
+ *   - NPCs that move every 1s to a random adjacent painted cell
+ * 
+ * Endpoints:
+ *   GET    /celdas      -> all painted cells
+ *   POST   /save-cell   -> create/update a painted cell
+ *   GET    /npcs        -> current NPCs (id, x, y)
+ */
 
-// Path to the JSON file
-const DATA_FILE = path.join(__dirname, 'celdas.json');
-const TEMP_DATA_FILE = path.join(__dirname, 'celdas_temp.json');
+const http = require("http");
 
-// Array to store celda data
-let celdas = [];
+// Store data in memory (lost on restart).
+let paintedCells = []; // array of { x, y, color }
+let npcs = [];         // array of { id, x, y }
 
-// Load existing celdas from the JSON file if it exists
-const loadCeldas = () => {
-  if (fs.existsSync(DATA_FILE)) {
-    try {
-      const data = fs.readFileSync(DATA_FILE, 'utf8');
-      celdas = JSON.parse(data);
-      console.log(`Loaded ${celdas.length} celdas from ${DATA_FILE}`);
-    } catch (err) {
-      console.error(`Error reading or parsing ${DATA_FILE}:`, err);
-      // Optionally, you can choose to exit the process if data is corrupted
-      // process.exit(1);
+/* --- Utilities --- */
+
+/** Checks if a color is non-white (so "#fff" or "#ffffff" is "not painted"). */
+function isColored(color = "") {
+  const c = color.trim().toLowerCase();
+  return c !== "#fff" && c !== "#ffffff" && c !== "white";
+}
+
+/** Returns all painted (non-white) cells. */
+function getAllPaintedCells() {
+  return paintedCells.filter(cell => isColored(cell.color));
+}
+
+/** Pick a random painted cell (or null if none exist). */
+function getRandomPaintedCell() {
+  const valid = getAllPaintedCells();
+  if (valid.length === 0) return null;
+  const idx = Math.floor(Math.random() * valid.length);
+  return valid[idx];
+}
+
+/** Find a cell in paintedCells by (x,y). */
+function findCell(x, y) {
+  return paintedCells.find(c => c.x === x && c.y === y);
+}
+
+/** Return an array of valid neighboring positions that are painted. (4 directions) */
+function findColoredNeighbors(x, y) {
+  const offsets = [
+    { dx:  1, dy:  0 },
+    { dx: -1, dy:  0 },
+    { dx:  0, dy:  1 },
+    { dx:  0, dy: -1 },
+  ];
+  const neighbors = [];
+  offsets.forEach(({ dx, dy }) => {
+    const nx = x + dx;
+    const ny = y + dy;
+    const cell = findCell(nx, ny);
+    if (cell && isColored(cell.color)) {
+      neighbors.push({ x: nx, y: ny });
     }
-  } else {
-    console.log(`${DATA_FILE} does not exist. Starting with an empty celdas array.`);
+  });
+  return neighbors;
+}
+
+/* --- NPC Spawning & Movement --- */
+
+/** Spawn an NPC every 10 seconds on a random painted cell. */
+setInterval(() => {
+  const spawnCell = getRandomPaintedCell();
+  if (spawnCell) {
+    const newNPC = {
+      // unique ID from current time + random
+      id: Date.now() + "_" + Math.floor(Math.random() * 1000),
+      x: spawnCell.x,
+      y: spawnCell.y
+    };
+    npcs.push(newNPC);
+    console.log("[Spawn NPC]", newNPC);
   }
-};
+}, 10000); // 10,000 ms = 10s
 
-// Save celdas to the JSON file atomically
-const saveCeldas = () => {
-  try {
-    // Write to a temporary file first
-    fs.writeFileSync(TEMP_DATA_FILE, JSON.stringify(celdas, null, 2), 'utf8');
-    // Rename the temporary file to the actual data file
-    fs.renameSync(TEMP_DATA_FILE, DATA_FILE);
-    console.log(`Saved ${celdas.length} celdas to ${DATA_FILE}`);
-  } catch (err) {
-    console.error(`Error writing to ${DATA_FILE}:`, err);
-  }
-};
+/** Move NPCs every 1 second. */
+setInterval(() => {
+  npcs.forEach(npc => {
+    const neighbors = findColoredNeighbors(npc.x, npc.y);
+    if (neighbors.length > 0) {
+      const rand = Math.floor(Math.random() * neighbors.length);
+      npc.x = neighbors[rand].x;
+      npc.y = neighbors[rand].y;
+    }
+    // else stays put
+  });
+}, 1000);
 
-// Load celdas on server start
-loadCeldas();
+/* --- Create HTTP server --- */
 
-// Set up interval to save celdas every 10 seconds (10000 milliseconds)
-const saveInterval = setInterval(saveCeldas, 10000);
-
-// Optional: Save celdas on server shutdown to ensure data is not lost
-const gracefulShutdown = () => {
-  console.log('Shutting down server. Saving celdas...');
-  clearInterval(saveInterval); // Stop the interval to prevent multiple saves
-  saveCeldas();
-  process.exit();
-};
-
-// Handle various shutdown signals
-process.on('SIGINT', gracefulShutdown);
-process.on('SIGTERM', gracefulShutdown);
-process.on('exit', () => {
-  console.log('Process exiting. Saving celdas...');
-  saveCeldas();
-});
-
-// Optional: Handle uncaught exceptions to attempt saving before crash
-process.on('uncaughtException', (err) => {
-  console.error('Uncaught Exception:', err);
-  console.log('Saving celdas before exiting...');
-  saveCeldas();
-  process.exit(1); // Exit the process after handling the exception
-});
-
-// Helper function to handle CORS (if needed)
-const setCORSHeaders = (res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*'); // Allow all origins
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-};
-
-// Helper function to get the content type based on file extension
-const getContentType = (filePath) => {
-  const extname = path.extname(filePath).toLowerCase();
-  const mimeTypes = {
-    '.html': 'text/html',
-    '.js': 'application/javascript',
-    '.css': 'text/css',
-    '.json': 'application/json',
-    '.png': 'image/png',
-    '.jpg': 'image/jpg',
-    '.gif': 'image/gif',
-    '.svg': 'image/svg+xml',
-    '.wav': 'audio/wav',
-    '.mp4': 'video/mp4',
-    '.woff': 'application/font-woff',
-    '.ttf': 'application/font-ttf',
-    '.eot': 'application/vnd.ms-fontobject',
-    '.otf': 'application/font-otf',
-    '.wasm': 'application/wasm'
-  };
-  return mimeTypes[extname] || 'application/octet-stream';
-};
-
-// Create the HTTP server
-const server = http.createServer((req, res) => {
-  // Handle preflight requests
-  if (req.method === 'OPTIONS') {
-    setCORSHeaders(res);
-    res.writeHead(204);
-    res.end();
-    return;
-  }
-
-  if (req.method === 'POST' && req.url === '/save-cell') {
-    let body = '';
-
-    // Collect the data chunks
-    req.on('data', chunk => {
-      body += chunk.toString();
-    });
-
-    // When all data is received
-    req.on('end', () => {
-      try {
-        const data = JSON.parse(body);
-        // Validate data
-        if (data.x !== undefined && data.y !== undefined && data.color !== undefined) {
-          celdas.push(data);
-          console.log('Received celda data:', data);
-          // Save immediately after adding a new celda
-          saveCeldas();
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify(celdas));
-        } else {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ status: 'error', message: 'Invalid data format' }));
-        }
-      } catch (err) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ status: 'error', message: 'Invalid JSON' }));
-      }
-    });
-  } else if (req.method === 'GET' && req.url === '/celdas') {
-    // Endpoint to retrieve all celdas
-    setCORSHeaders(res);
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(celdas));
-  } else if (req.method === 'GET' && req.url === '/') {
-    // Serve index.html on root URL
-    const filePath = path.join(__dirname, 'index.html');
-    fs.readFile(filePath, (err, content) => {
-      if (err) {
-        res.writeHead(500, { 'Content-Type': 'text/plain' });
-        res.end('Internal Server Error');
-      } else {
-        res.writeHead(200, { 'Content-Type': 'text/html' });
-        res.end(content);
-      }
-    });
-  } else {
-    // Serve static files based on the request URL
-    const filePath = path.join(__dirname, req.url);
-    fs.exists(filePath, (exists) => {
-      if (exists && fs.lstatSync(filePath).isFile()) {
-        fs.readFile(filePath, (err, content) => {
-          if (err) {
-            res.writeHead(500, { 'Content-Type': 'text/plain' });
-            res.end('Internal Server Error');
-          } else {
-            res.writeHead(200, { 'Content-Type': getContentType(filePath) });
-            res.end(content);
-          }
-        });
-      } else {
-        // Handle 404 Not Found
-        res.writeHead(404, { 'Content-Type': 'text/plain' });
-        res.end('Not Found');
-      }
-    });
-  }
-});
-
-// Start the server on port 3000
 const PORT = 3000;
+
+const server = http.createServer((req, res) => {
+  // Minimal cross-origin headers if your client is served from a different port/domain:
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+  // Handle preflight OPTIONS (CORS)
+  if (req.method === "OPTIONS") {
+    res.writeHead(200);
+    return res.end();
+  }
+
+  // Routing
+  if (req.method === "GET" && req.url === "/celdas") {
+    // Return paintedCells as JSON
+    const json = JSON.stringify(paintedCells);
+    res.writeHead(200, { "Content-Type": "application/json" });
+    return res.end(json);
+
+  } else if (req.method === "GET" && req.url === "/npcs") {
+    // Return NPCs as JSON
+    const json = JSON.stringify(npcs);
+    res.writeHead(200, { "Content-Type": "application/json" });
+    return res.end(json);
+
+  } else if (req.method === "POST" && req.url === "/save-cell") {
+    // Save or update a painted cell
+    let bodyData = "";
+    req.on("data", chunk => { bodyData += chunk; });
+    req.on("end", () => {
+      try {
+        const { x, y, color } = JSON.parse(bodyData);
+        if (typeof x !== "number" || typeof y !== "number" || !color) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          return res.end(JSON.stringify({ error: "Invalid data" }));
+        }
+        // Update existing or push new
+        const idx = paintedCells.findIndex(c => c.x === x && c.y === y);
+        if (idx >= 0) {
+          paintedCells[idx].color = color;
+        } else {
+          paintedCells.push({ x, y, color });
+        }
+        console.log(`[Save Cell] (${x}, ${y}) => ${color}`);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ status: "ok" }));
+      } catch (e) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ error: "Bad JSON format" }));
+      }
+    });
+
+  } else {
+    // Not Found
+    res.writeHead(404, { "Content-Type": "application/json" });
+    return res.end(JSON.stringify({ error: "Not found" }));
+  }
+});
+
 server.listen(PORT, () => {
-  console.log(`Server is listening on port ${PORT}`);
+  console.log(`Server running at http://localhost:${PORT}/`);
 });
 

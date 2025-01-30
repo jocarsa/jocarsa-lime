@@ -2,23 +2,24 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>jocarsa | isometric</title>
+  <title>Isometric Grid with NPCs</title>
   <style>
-    /* Reset */
+    /* Basic reset */
     * {
       margin: 0;
       padding: 0;
       box-sizing: border-box;
     }
 
-    /* Center the container in the viewport */
+    /* Center everything in the viewport */
     body {
       font-family: Arial, sans-serif;
       background-color: #f4f4f4;
-      display: flex;              /* Make body a flex container */
-      align-items: center;        /* Vertically center its contents */
-      justify-content: center;    /* Horizontally center its contents */
-      height: 100vh;              /* Full viewport height */
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
       color: #333;
     }
 
@@ -46,24 +47,20 @@
       cursor: pointer;
     }
 
-    /*
-      .grid-container is now the element we rotate to achieve
-      an orthographic isometric effect (lines stay parallel).
-    */
+    /* The parent container for isometric transform */
     .grid-container {
       position: relative;
       transform: rotateX(60deg) rotateZ(45deg);
       transform-origin: center center;
       transform-style: preserve-3d;
-      /* No fixed width/height here; let #contenedor size itself. */
     }
 
     #contenedor {
       position: relative;
       background-color: #ccc;
-      /* We'll set width/height dynamically in JS (dibuja function). */
     }
 
+    /* Each cell is just a float-based square. */
     .celda {
       width: 10px;
       height: 10px;
@@ -72,14 +69,27 @@
       border-bottom: 1px solid #ddd;
       transition: background 0.3s;
       cursor: pointer;
-      float: left; /* Original grid layout */
+      float: left;
+      position: relative; /* for NPC circles */
     }
 
     .celda:hover {
       background: rgba(255, 0, 0, 0.1);
     }
 
-    /* Navigation Buttons - placed inside .grid-container (so they transform together) */
+    /* NPC circle */
+    .npc {
+      width: 10px;
+      height: 10px;
+      background-color: blue;
+      border-radius: 50%;
+      position: absolute;
+      top: 0;   /* If you want to center within cell, adjust top/left. */
+      left: 0;
+      z-index: 99;
+    }
+
+    /* Navigation Buttons */
     .nav-button {
       position: absolute;
       background-color: #32CD32; /* Lime green */
@@ -91,7 +101,6 @@
       font-size: 1.2em;
       box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
       transition: background 0.3s, transform 0.2s;
-      /* Appear above .celda tiles */
       z-index: 999;
     }
 
@@ -100,32 +109,29 @@
       transform: scale(1.1);
     }
 
-    /* Positions for arrow buttons (still absolute, but now inside the rotated container) */
+    /* Position of arrow buttons inside .grid-container so they rotate too */
     #arriba {
       top: -50px;
       left: 50%;
       transform: translateX(-50%);
     }
-
     #abajo {
       bottom: -50px;
       left: 50%;
       transform: translateX(-50%);
     }
-
     #izquierda {
       left: -50px;
       top: 50%;
       transform: translateY(-50%);
     }
-
     #derecha {
       right: -50px;
       top: 50%;
       transform: translateY(-50%);
     }
 
-    /* Responsive Design adjustments (optional) */
+    /* Responsive (optional) */
     @media (max-width: 600px) {
       .nav-button {
         padding: 8px;
@@ -139,13 +145,12 @@
 </head>
 <body>
   <header>
-    <h1>jocarsa | isometric</h1>
+    <h1>Isometric Grid with NPCs</h1>
     <div id="controls">
       <input type="color" id="color" value="#ff0000" title="Choose Cell Color">
     </div>
   </header>
 
-  <!-- .grid-container is now the rotated element -->
   <div class="grid-container">
     <button id="arriba" class="nav-button" title="Move Up">⬆️</button>
     <button id="abajo" class="nav-button" title="Move Down">⬇️</button>
@@ -158,10 +163,11 @@
     let desfasex = 0;
     let desfasey = 0;
     let color = "#ff0000"; // Default color
-    const anchura = 20;
-    const altura = 20;
-    const tamanio = 40;
+    const anchura = 20;    // how many cells wide
+    const altura = 20;     // how many cells tall
+    const tamanio = 40;    // pixel size per cell
 
+    // User color selection
     document.querySelector("#color").onchange = function(){
       color = this.value;
     };
@@ -182,26 +188,24 @@
           celda.setAttribute("data-x", x);
           celda.setAttribute("data-y", y);
 
-          // On click, color the cell and send to server
+          // Clicking a cell -> paint color & save to server
           celda.onclick = function(){
             this.style.background = color;
-            const mensaje = {
+            const payload = {
               color: color,
-              x: this.getAttribute("data-x"),
-              y: this.getAttribute("data-y")
+              x: x,
+              y: y
             };
-            fetch('/save-cell', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(mensaje)
+            fetch("http://localhost:3000/save-cell", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(payload)
             })
-            .then(response => response.json())
-            .then(data => {
-              // handle success if needed
+            .then(r => r.json())
+            .then(resp => {
+              // update done (resp.status === 'ok')
             })
-            .catch(error => {
-              console.error('Fetch error:', error);
-            });
+            .catch(err => console.error(err));
           };
           contenedor.appendChild(celda);
         }
@@ -210,28 +214,50 @@
 
     dibuja();
 
-    // Periodically fetch cell colors from the server
-    let temporizador = setTimeout(bucle, 1000);
+    // Periodic updates: every 1s, fetch new data
+    let timer = setTimeout(bucle, 1000);
 
-    function bucle(){
-      fetch("/celdas")
+    function bucle() {
+      // 1) Fetch painted cells
+      fetch("http://localhost:3000/celdas")
         .then(response => response.json())
         .then(datos => {
           datos.forEach(dato => {
             const selector = `.celda[data-x='${dato.x}'][data-y='${dato.y}']`;
             const foundCell = document.querySelector(selector);
-            if(foundCell){
+            if (foundCell) {
               foundCell.style.background = dato.color;
             }
           });
         })
-        .catch(err => console.error(err));
+        .catch(err => console.error("Cell fetch error:", err));
 
-      clearTimeout(temporizador);
-      temporizador = setTimeout(bucle, 1000);
+      // 2) Fetch NPCs
+      fetch("http://localhost:3000/npcs")
+        .then(response => response.json())
+        .then(npcs => {
+          // Remove old NPC markers
+          document.querySelectorAll(".npc").forEach(n => n.remove());
+
+          // Place new NPCs
+          npcs.forEach(npc => {
+            const selector = `.celda[data-x='${npc.x}'][data-y='${npc.y}']`;
+            const foundCell = document.querySelector(selector);
+            if (foundCell) {
+              const npcDiv = document.createElement("div");
+              npcDiv.classList.add("npc");
+              npcDiv.setAttribute("data-id", npc.id);
+              foundCell.appendChild(npcDiv);
+            }
+          });
+        })
+        .catch(err => console.error("NPC fetch error:", err));
+
+      clearTimeout(timer);
+      timer = setTimeout(bucle, 1000);
     }
 
-    // Navigation (shift the window of x/y)
+    // Navigation: shift the grid window
     document.querySelector("#arriba").onclick = function(){
       desfasex--;
       dibuja();
