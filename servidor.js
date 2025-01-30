@@ -2,8 +2,72 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 
+// Path to the JSON file
+const DATA_FILE = path.join(__dirname, 'celdas.json');
+const TEMP_DATA_FILE = path.join(__dirname, 'celdas_temp.json');
+
 // Array to store celda data
-const celdas = [];
+let celdas = [];
+
+// Load existing celdas from the JSON file if it exists
+const loadCeldas = () => {
+  if (fs.existsSync(DATA_FILE)) {
+    try {
+      const data = fs.readFileSync(DATA_FILE, 'utf8');
+      celdas = JSON.parse(data);
+      console.log(`Loaded ${celdas.length} celdas from ${DATA_FILE}`);
+    } catch (err) {
+      console.error(`Error reading or parsing ${DATA_FILE}:`, err);
+      // Optionally, you can choose to exit the process if data is corrupted
+      // process.exit(1);
+    }
+  } else {
+    console.log(`${DATA_FILE} does not exist. Starting with an empty celdas array.`);
+  }
+};
+
+// Save celdas to the JSON file atomically
+const saveCeldas = () => {
+  try {
+    // Write to a temporary file first
+    fs.writeFileSync(TEMP_DATA_FILE, JSON.stringify(celdas, null, 2), 'utf8');
+    // Rename the temporary file to the actual data file
+    fs.renameSync(TEMP_DATA_FILE, DATA_FILE);
+    console.log(`Saved ${celdas.length} celdas to ${DATA_FILE}`);
+  } catch (err) {
+    console.error(`Error writing to ${DATA_FILE}:`, err);
+  }
+};
+
+// Load celdas on server start
+loadCeldas();
+
+// Set up interval to save celdas every 10 seconds (10000 milliseconds)
+const saveInterval = setInterval(saveCeldas, 10000);
+
+// Optional: Save celdas on server shutdown to ensure data is not lost
+const gracefulShutdown = () => {
+  console.log('Shutting down server. Saving celdas...');
+  clearInterval(saveInterval); // Stop the interval to prevent multiple saves
+  saveCeldas();
+  process.exit();
+};
+
+// Handle various shutdown signals
+process.on('SIGINT', gracefulShutdown);
+process.on('SIGTERM', gracefulShutdown);
+process.on('exit', () => {
+  console.log('Process exiting. Saving celdas...');
+  saveCeldas();
+});
+
+// Optional: Handle uncaught exceptions to attempt saving before crash
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception:', err);
+  console.log('Saving celdas before exiting...');
+  saveCeldas();
+  process.exit(1); // Exit the process after handling the exception
+});
 
 // Helper function to handle CORS (if needed)
 const setCORSHeaders = (res) => {
@@ -58,9 +122,11 @@ const server = http.createServer((req, res) => {
       try {
         const data = JSON.parse(body);
         // Validate data
-        if (data.id && data.color) {
+        if (data.x !== undefined && data.y !== undefined && data.color !== undefined) {
           celdas.push(data);
           console.log('Received celda data:', data);
+          // Save immediately after adding a new celda
+          saveCeldas();
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify(celdas));
         } else {
@@ -90,9 +156,25 @@ const server = http.createServer((req, res) => {
       }
     });
   } else {
-    // Handle 404 Not Found
-    res.writeHead(404, { 'Content-Type': 'text/plain' });
-    res.end('Not Found');
+    // Serve static files based on the request URL
+    const filePath = path.join(__dirname, req.url);
+    fs.exists(filePath, (exists) => {
+      if (exists && fs.lstatSync(filePath).isFile()) {
+        fs.readFile(filePath, (err, content) => {
+          if (err) {
+            res.writeHead(500, { 'Content-Type': 'text/plain' });
+            res.end('Internal Server Error');
+          } else {
+            res.writeHead(200, { 'Content-Type': getContentType(filePath) });
+            res.end(content);
+          }
+        });
+      } else {
+        // Handle 404 Not Found
+        res.writeHead(404, { 'Content-Type': 'text/plain' });
+        res.end('Not Found');
+      }
+    });
   }
 });
 

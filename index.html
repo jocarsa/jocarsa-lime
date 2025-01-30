@@ -1,96 +1,253 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
+  <meta charset="utf-8">
+  <title>jocarsa | isometric</title>
   <style>
-    #contenedor{
-      width:100px;
-      height:100px;
+    /* Reset */
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
     }
-    .celda{
-      width:10px;
-      height:10px;
-      border:1px solid grey;
-      float:left;
-      box-sizing:border-box;
-      transition:all 1s;
+
+    /* Center the container in the viewport */
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #f4f4f4;
+      display: flex;              /* Make body a flex container */
+      align-items: center;        /* Vertically center its contents */
+      justify-content: center;    /* Horizontally center its contents */
+      height: 100vh;              /* Full viewport height */
+      color: #333;
     }
-    .celda:hover{
-      background:rgba(255,0,0,0.1);
+
+    header {
+      margin-bottom: 20px;
+      text-align: center;
+    }
+
+    header h1 {
+      font-size: 2em;
+      color: #32CD32; /* Lime green */
+    }
+
+    #controls {
+      display: flex;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+
+    #controls input[type="color"] {
+      margin-right: 20px;
+      padding: 5px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    /*
+      .grid-container is now the element we rotate to achieve
+      an orthographic isometric effect (lines stay parallel).
+    */
+    .grid-container {
+      position: relative;
+      transform: rotateX(60deg) rotateZ(45deg);
+      transform-origin: center center;
+      transform-style: preserve-3d;
+      /* No fixed width/height here; let #contenedor size itself. */
+    }
+
+    #contenedor {
+      position: relative;
+      background-color: #ccc;
+      /* We'll set width/height dynamically in JS (dibuja function). */
+    }
+
+    .celda {
+      width: 10px;
+      height: 10px;
+      background-color: #fff;
+      border-left: 1px solid #ddd;
+      border-bottom: 1px solid #ddd;
+      transition: background 0.3s;
+      cursor: pointer;
+      float: left; /* Original grid layout */
+    }
+
+    .celda:hover {
+      background: rgba(255, 0, 0, 0.1);
+    }
+
+    /* Navigation Buttons - placed inside .grid-container (so they transform together) */
+    .nav-button {
+      position: absolute;
+      background-color: #32CD32; /* Lime green */
+      border: none;
+      color: white;
+      padding: 10px;
+      border-radius: 50%;
+      cursor: pointer;
+      font-size: 1.2em;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      transition: background 0.3s, transform 0.2s;
+      /* Appear above .celda tiles */
+      z-index: 999;
+    }
+
+    .nav-button:hover {
+      background-color: #28a428;
+      transform: scale(1.1);
+    }
+
+    /* Positions for arrow buttons (still absolute, but now inside the rotated container) */
+    #arriba {
+      top: -50px;
+      left: 50%;
+      transform: translateX(-50%);
+    }
+
+    #abajo {
+      bottom: -50px;
+      left: 50%;
+      transform: translateX(-50%);
+    }
+
+    #izquierda {
+      left: -50px;
+      top: 50%;
+      transform: translateY(-50%);
+    }
+
+    #derecha {
+      right: -50px;
+      top: 50%;
+      transform: translateY(-50%);
+    }
+
+    /* Responsive Design adjustments (optional) */
+    @media (max-width: 600px) {
+      .nav-button {
+        padding: 8px;
+        font-size: 1em;
+      }
+      header h1 {
+        font-size: 1.5em;
+      }
     }
   </style>
 </head>
 <body>
-  <input type="color" id="color" value="#ff0000">
-  <div id="contenedor">
+  <header>
+    <h1>jocarsa | isometric</h1>
+    <div id="controls">
+      <input type="color" id="color" value="#ff0000" title="Choose Cell Color">
+    </div>
+  </header>
+
+  <!-- .grid-container is now the rotated element -->
+  <div class="grid-container">
+    <button id="arriba" class="nav-button" title="Move Up">⬆️</button>
+    <button id="abajo" class="nav-button" title="Move Down">⬇️</button>
+    <button id="izquierda" class="nav-button" title="Move Left">⬅️</button>
+    <button id="derecha" class="nav-button" title="Move Right">➡️</button>
+    <div id="contenedor"></div>
   </div>
+
   <script>
+    let desfasex = 0;
+    let desfasey = 0;
     let color = "#ff0000"; // Default color
-    const anchura = 10;
-    const altura = 10;
-    const tamanio = 50;
+    const anchura = 20;
+    const altura = 20;
+    const tamanio = 40;
 
     document.querySelector("#color").onchange = function(){
       color = this.value;
-    }
+    };
 
     const contenedor = document.querySelector("#contenedor");
-    contenedor.style.width = (anchura * tamanio) + "px";
-    contenedor.style.height = (altura * tamanio) + "px";
-    let identificador = 0;
 
-    for(let x = 0; x < anchura; x++){
-      for(let y = 0; y < altura; y++){
-        const celda = document.createElement("div");
-        celda.setAttribute("id", "celda" + identificador);
-        identificador++;
-        celda.classList.add("celda");
-        celda.style.width = tamanio + "px";
-        celda.style.height = tamanio + "px";
-        celda.onclick = function(){
-          this.style.background = color;
-          const mensaje = {
-            "color": color,
-            "id": this.getAttribute("id")
+    function dibuja(){
+      contenedor.innerHTML = "";
+      contenedor.style.width = (anchura * tamanio) + "px";
+      contenedor.style.height = (altura * tamanio) + "px";
+
+      for(let x = desfasex; x < anchura + desfasex; x++){
+        for(let y = desfasey; y < altura + desfasey; y++){
+          const celda = document.createElement("div");
+          celda.classList.add("celda");
+          celda.style.width = tamanio + "px";
+          celda.style.height = tamanio + "px";
+          celda.setAttribute("data-x", x);
+          celda.setAttribute("data-y", y);
+
+          // On click, color the cell and send to server
+          celda.onclick = function(){
+            this.style.background = color;
+            const mensaje = {
+              color: color,
+              x: this.getAttribute("data-x"),
+              y: this.getAttribute("data-y")
+            };
+            fetch('/save-cell', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(mensaje)
+            })
+            .then(response => response.json())
+            .then(data => {
+              // handle success if needed
+            })
+            .catch(error => {
+              console.error('Fetch error:', error);
+            });
           };
-          console.log('Sending:', mensaje);
-          
-          // Send the data to the server
-          fetch('http://localhost:3000/save-cell', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(mensaje)
-          })
-          .then(response => response.json())
-          .then(data => {
-            console.log(data)
-          })
-          .catch(error => {
-            console.error('Fetch error:', error);
-          });
+          contenedor.appendChild(celda);
         }
-        contenedor.appendChild(celda);
       }
     }
-    
-    let temporizador = setTimeout("bucle()",1000)
-    
+
+    dibuja();
+
+    // Periodically fetch cell colors from the server
+    let temporizador = setTimeout(bucle, 1000);
+
     function bucle(){
-    
-    	fetch("http://localhost:3000/celdas")
-			.then(function(response){
-				return response.json()
-			})
-			.then(function(datos){
-				datos.forEach(function(dato){
-					document.querySelector("#"+dato.id).style.background = dato.color
-				})
-			})
-    	
-    	clearTimeout(temporizador)
-    	temporizador = setTimeout("bucle()",1000)
+      fetch("/celdas")
+        .then(response => response.json())
+        .then(datos => {
+          datos.forEach(dato => {
+            const selector = `.celda[data-x='${dato.x}'][data-y='${dato.y}']`;
+            const foundCell = document.querySelector(selector);
+            if(foundCell){
+              foundCell.style.background = dato.color;
+            }
+          });
+        })
+        .catch(err => console.error(err));
+
+      clearTimeout(temporizador);
+      temporizador = setTimeout(bucle, 1000);
     }
+
+    // Navigation (shift the window of x/y)
+    document.querySelector("#arriba").onclick = function(){
+      desfasex--;
+      dibuja();
+    };
+    document.querySelector("#abajo").onclick = function(){
+      desfasex++;
+      dibuja();
+    };
+    document.querySelector("#izquierda").onclick = function(){
+      desfasey--;
+      dibuja();
+    };
+    document.querySelector("#derecha").onclick = function(){
+      desfasey++;
+      dibuja();
+    };
   </script>
 </body>
 </html>
