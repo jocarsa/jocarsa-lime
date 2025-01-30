@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Isometric Grid with NPCs</title>
+  <title>Isometric Grid with Smooth NPCs</title>
   <style>
     /* Basic reset */
     * {
@@ -11,7 +11,6 @@
       box-sizing: border-box;
     }
 
-    /* Center everything in the viewport */
     body {
       font-family: Arial, sans-serif;
       background-color: #f4f4f4;
@@ -27,7 +26,6 @@
       margin-bottom: 20px;
       text-align: center;
     }
-
     header h1 {
       font-size: 2em;
       color: #32CD32; /* Lime green */
@@ -60,7 +58,7 @@
       background-color: #ccc;
     }
 
-    /* Each cell is just a float-based square. */
+    /* Each cell: float-based, standard 2D. */
     .celda {
       width: 10px;
       height: 10px;
@@ -70,26 +68,31 @@
       transition: background 0.3s;
       cursor: pointer;
       float: left;
-      position: relative; /* for NPC circles */
     }
-
     .celda:hover {
       background: rgba(255, 0, 0, 0.1);
     }
 
-    /* NPC circle */
+    /*
+      NPCs are absolutely positioned within #contenedor (NOT inside .celda),
+      so we can do smooth transitions on left/top, and invert rotation so they face the camera.
+    */
     .npc {
-      width: 10px;
-      height: 10px;
-      background-color: blue;
-      border-radius: 50%;
+      width: 60px;
+      height: 60px;
+      background: url(npc.png);
+      background-size: cover;
+      border-radius: 5%;
       position: absolute;
-      top: 0;   /* If you want to center within cell, adjust top/left. */
-      left: 0;
-      z-index: 99;
+      /* Smooth transitions for movement */
+      transition: left 1s linear, top 1s linear;
+      z-index: 999;
+
+      /* Invert rotation so it appears "facing" camera, adjust as needed */
+      transform: translateX(-20px) translateY(-20px) rotateZ(139deg) rotateX(199deg);
     }
 
-    /* Navigation Buttons */
+    /* Navigation Buttons (also rotated with the parent) */
     .nav-button {
       position: absolute;
       background-color: #32CD32; /* Lime green */
@@ -101,15 +104,12 @@
       font-size: 1.2em;
       box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
       transition: background 0.3s, transform 0.2s;
-      z-index: 999;
+      z-index: 1000;
     }
-
     .nav-button:hover {
       background-color: #28a428;
       transform: scale(1.1);
     }
-
-    /* Position of arrow buttons inside .grid-container so they rotate too */
     #arriba {
       top: -50px;
       left: 50%;
@@ -143,44 +143,53 @@
     }
   </style>
 </head>
+
 <body>
   <header>
-    <h1>Isometric Grid with NPCs</h1>
+    <h1>Isometric Grid with Smooth NPCs</h1>
     <div id="controls">
       <input type="color" id="color" value="#ff0000" title="Choose Cell Color">
     </div>
   </header>
 
+  <!-- .grid-container is the isometrically rotated parent -->
   <div class="grid-container">
     <button id="arriba" class="nav-button" title="Move Up">⬆️</button>
     <button id="abajo" class="nav-button" title="Move Down">⬇️</button>
     <button id="izquierda" class="nav-button" title="Move Left">⬅️</button>
     <button id="derecha" class="nav-button" title="Move Right">➡️</button>
+
     <div id="contenedor"></div>
   </div>
 
   <script>
+    const anchura = 20;   // number of cells horizontally (visible)
+    const altura = 20;    // number of cells vertically (visible)
+    const tamanio = 40;   // pixel size per cell
+
     let desfasex = 0;
     let desfasey = 0;
-    let color = "#ff0000"; // Default color
-    const anchura = 20;    // how many cells wide
-    const altura = 20;     // how many cells tall
-    const tamanio = 40;    // pixel size per cell
+    let color = "#ff0000"; // default color
 
-    // User color selection
+    // Store NPC elements in a dictionary by ID so we can update positions smoothly
+    const npcElements = {}; // { [npc.id]: HTMLDivElement }
+
+    // Reference to the grid container
+    const contenedor = document.querySelector("#contenedor");
+
+    // Color picker
     document.querySelector("#color").onchange = function(){
       color = this.value;
     };
 
-    const contenedor = document.querySelector("#contenedor");
-
-    function dibuja(){
+    // Draw the (visible) grid based on desfasex/desfasey
+    function dibuja() {
       contenedor.innerHTML = "";
       contenedor.style.width = (anchura * tamanio) + "px";
       contenedor.style.height = (altura * tamanio) + "px";
 
-      for(let x = desfasex; x < anchura + desfasex; x++){
-        for(let y = desfasey; y < altura + desfasey; y++){
+      for(let x = desfasex; x < desfasex + anchura; x++){
+        for(let y = desfasey; y < desfasey + altura; y++){
           const celda = document.createElement("div");
           celda.classList.add("celda");
           celda.style.width = tamanio + "px";
@@ -188,22 +197,21 @@
           celda.setAttribute("data-x", x);
           celda.setAttribute("data-y", y);
 
-          // Clicking a cell -> paint color & save to server
+          // When clicked, paint cell & send to server
           celda.onclick = function(){
-            this.style.background = color;
-            const payload = {
-              color: color,
-              x: x,
-              y: y
-            };
+            const payload = { x, y, color };
+            // Immediately color it locally
+            celda.style.background = color;
+
+            // Save on server
             fetch("http://localhost:3000/save-cell", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(payload)
             })
             .then(r => r.json())
-            .then(resp => {
-              // update done (resp.status === 'ok')
+            .then(() => {
+              // success or handle error
             })
             .catch(err => console.error(err));
           };
@@ -214,19 +222,27 @@
 
     dibuja();
 
-    // Periodic updates: every 1s, fetch new data
-    let timer = setTimeout(bucle, 1000);
+    // Periodically update from server
+    let timer = setTimeout(loop, 1000);
 
-    function bucle() {
+    function loop() {
       // 1) Fetch painted cells
       fetch("http://localhost:3000/celdas")
-        .then(response => response.json())
-        .then(datos => {
-          datos.forEach(dato => {
-            const selector = `.celda[data-x='${dato.x}'][data-y='${dato.y}']`;
-            const foundCell = document.querySelector(selector);
-            if (foundCell) {
-              foundCell.style.background = dato.color;
+        .then(r => r.json())
+        .then(data => {
+          // Update cell backgrounds
+          data.forEach(dato => {
+            const { x, y, color } = dato;
+            // Only color if within our current view
+            if (
+              x >= desfasex && x < desfasex + anchura &&
+              y >= desfasey && y < desfasey + altura
+            ) {
+              const selector = `.celda[data-x='${x}'][data-y='${y}']`;
+              const cellDiv = document.querySelector(selector);
+              if (cellDiv) {
+                cellDiv.style.background = color;
+              }
             }
           });
         })
@@ -234,46 +250,104 @@
 
       // 2) Fetch NPCs
       fetch("http://localhost:3000/npcs")
-        .then(response => response.json())
+        .then(r => r.json())
         .then(npcs => {
-          // Remove old NPC markers
-          document.querySelectorAll(".npc").forEach(n => n.remove());
+          // Mark which NPC IDs are still present
+          const currentIDs = new Set(npcs.map(n => n.id));
 
-          // Place new NPCs
+          // Remove any NPC elements that no longer exist on server
+          Object.keys(npcElements).forEach(id => {
+            if (!currentIDs.has(id)) {
+              npcElements[id].remove();
+              delete npcElements[id];
+            }
+          });
+
+          // Update or create each NPC element
           npcs.forEach(npc => {
-            const selector = `.celda[data-x='${npc.x}'][data-y='${npc.y}']`;
-            const foundCell = document.querySelector(selector);
-            if (foundCell) {
+            const { id, x, y } = npc;
+
+            // If not in dictionary, create the element
+            if (!npcElements[id]) {
               const npcDiv = document.createElement("div");
               npcDiv.classList.add("npc");
-              npcDiv.setAttribute("data-id", npc.id);
-              foundCell.appendChild(npcDiv);
+              npcDiv.setAttribute("data-id", id);
+              contenedor.appendChild(npcDiv);
+              npcElements[id] = npcDiv;
+            }
+
+            // Store x,y on the element for repositioning
+            npcElements[id].setAttribute("data-x", x);
+            npcElements[id].setAttribute("data-y", y);
+
+            // Convert grid coords to container coords
+            const screenX = (x - desfasex) * tamanio;
+            const screenY = (y - desfasey) * tamanio;
+
+            // Hide or show NPC
+            if (
+              screenX < 0 || screenX >= (anchura * tamanio) ||
+              screenY < 0 || screenY >= (altura * tamanio)
+            ) {
+              npcElements[id].style.display = "none";
+            } else {
+              npcElements[id].style.display = "block";
+              npcElements[id].style.left = screenY + "px";
+              npcElements[id].style.top = screenX + "px";
             }
           });
         })
         .catch(err => console.error("NPC fetch error:", err));
 
       clearTimeout(timer);
-      timer = setTimeout(bucle, 1000);
+      timer = setTimeout(loop, 1000);
     }
 
-    // Navigation: shift the grid window
+    /* Navigation: shift the board window, then redraw & reposition NPCs */
     document.querySelector("#arriba").onclick = function(){
       desfasex--;
       dibuja();
+      repositionNPCs();
     };
     document.querySelector("#abajo").onclick = function(){
       desfasex++;
       dibuja();
+      repositionNPCs();
     };
     document.querySelector("#izquierda").onclick = function(){
       desfasey--;
       dibuja();
+      repositionNPCs();
     };
     document.querySelector("#derecha").onclick = function(){
       desfasey++;
       dibuja();
+      repositionNPCs();
     };
+
+    function repositionNPCs() {
+      // Re-apply new top/left for each NPC based on new offset
+      Object.keys(npcElements).forEach(id => {
+        const npcDiv = npcElements[id];
+        // Read last known coords from data attributes
+        const x = parseInt(npcDiv.getAttribute("data-x"), 10);
+        const y = parseInt(npcDiv.getAttribute("data-y"), 10);
+
+        const screenX = (x - desfasex) * tamanio;
+        const screenY = (y - desfasey) * tamanio;
+
+        if (
+          screenX < 0 || screenX >= anchura * tamanio ||
+          screenY < 0 || screenY >= altura * tamanio
+        ) {
+          npcDiv.style.display = "none";
+        } else {
+          npcDiv.style.display = "block";
+          npcDiv.style.left = screenY + "px";
+          npcDiv.style.top = screenX + "px";
+        }
+      });
+    }
   </script>
 </body>
 </html>
