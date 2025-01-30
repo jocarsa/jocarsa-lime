@@ -1,0 +1,97 @@
+<!doctype html>
+<html>
+<head>
+  <style>
+    #contenedor{
+      width:100px;
+      height:100px;
+    }
+    .celda{
+      width:10px;
+      height:10px;
+      border:1px solid grey;
+      float:left;
+      box-sizing:border-box;
+      transition:all 1s;
+    }
+    .celda:hover{
+      background:rgba(255,0,0,0.1);
+    }
+  </style>
+</head>
+<body>
+  <input type="color" id="color" value="#ff0000">
+  <div id="contenedor">
+  </div>
+  <script>
+    let color = "#ff0000"; // Default color
+    const anchura = 10;
+    const altura = 10;
+    const tamanio = 50;
+
+    document.querySelector("#color").onchange = function(){
+      color = this.value;
+    }
+
+    const contenedor = document.querySelector("#contenedor");
+    contenedor.style.width = (anchura * tamanio) + "px";
+    contenedor.style.height = (altura * tamanio) + "px";
+    let identificador = 0;
+
+    for(let x = 0; x < anchura; x++){
+      for(let y = 0; y < altura; y++){
+        const celda = document.createElement("div");
+        celda.setAttribute("id", "celda" + identificador);
+        identificador++;
+        celda.classList.add("celda");
+        celda.style.width = tamanio + "px";
+        celda.style.height = tamanio + "px";
+        celda.onclick = function(){
+          this.style.background = color;
+          const mensaje = {
+            "color": color,
+            "id": this.getAttribute("id")
+          };
+          console.log('Sending:', mensaje);
+          
+          // Send the data to the server
+          fetch('http://localhost:3000/save-cell', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(mensaje)
+          })
+          .then(response => response.json())
+          .then(data => {
+            console.log(data)
+          })
+          .catch(error => {
+            console.error('Fetch error:', error);
+          });
+        }
+        contenedor.appendChild(celda);
+      }
+    }
+    
+    let temporizador = setTimeout("bucle()",1000)
+    
+    function bucle(){
+    
+    	fetch("http://localhost:3000/celdas")
+			.then(function(response){
+				return response.json()
+			})
+			.then(function(datos){
+				datos.forEach(function(dato){
+					document.querySelector("#"+dato.id).style.background = dato.color
+				})
+			})
+    	
+    	clearTimeout(temporizador)
+    	temporizador = setTimeout("bucle()",1000)
+    }
+  </script>
+</body>
+</html>
+
